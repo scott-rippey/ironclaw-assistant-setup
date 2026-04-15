@@ -1,0 +1,9 @@
+# Local planning and history -- not shipped to the public repo
+archive/
+docs/
+
+# Claude Code session state
+.claude/
+
+# macOS
+.DS_Store

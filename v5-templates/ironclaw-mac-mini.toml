@@ -1,0 +1,89 @@
+# IronClaw Mac Mini deployment profile
+#
+# Source of truth:        v5-templates/ironclaw-mac-mini.toml (this project repo)
+# Deployed location:      ~/.ironclaw/profiles/ironclaw-mac-mini.toml (Mac Mini)
+# Selection:              IRONCLAW_PROFILE=ironclaw-mac-mini (in ~/.ironclaw/.env)
+#
+# Base profile: `local` (no Docker sandbox).
+# See "About Sandboxing (Two Kinds)" in the v5.0 setup guide for why.
+# Switch-to-local-sandbox triggers: add a shell tool, enable engine v2 / CodeAct,
+# or extend to coding workflows.
+#
+# Layering order (v0.25.0 config unification):
+#   defaults -> this profile -> config.toml -> DB -> environment variables
+# User-set values keep priority over this profile.
+# Secrets (API keys, auth tokens) are env-only and never live here.
+
+extends = "local"
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
+[agent]
+name = "ironclaw"
+max_parallel_jobs = 5
+
+# ---------------------------------------------------------------------------
+# Channels (Gateway + TUI)
+# ---------------------------------------------------------------------------
+[channels]
+# TUI ships in the default v0.25.0 binary; useful for SSH debugging.
+# See Appendix C of the setup guide.
+cli_mode = "tui"
+
+http_enabled = true
+http_host = "127.0.0.1"
+http_port = 3001
+
+# ---------------------------------------------------------------------------
+# Heartbeat
+# ---------------------------------------------------------------------------
+[heartbeat]
+enabled = true
+interval_secs = 1800   # 30 minutes
+
+# ---------------------------------------------------------------------------
+# Routines engine
+# ---------------------------------------------------------------------------
+[routines]
+enabled = true
+cron_interval = 60
+max_concurrent = 3
+
+# ---------------------------------------------------------------------------
+# Skills (SKILL.md assets, including commitment skills)
+# ---------------------------------------------------------------------------
+[skills]
+enabled = true
+max_tokens = 4000
+catalog_url = "https://clawhub.dev"
+auto_discover = true
+
+# ---------------------------------------------------------------------------
+# Sandbox (WASM, always on; Docker sandbox disabled -- see `extends = "local"`)
+# ---------------------------------------------------------------------------
+# No [sandbox] block needed. The `local` profile disables Docker sandboxing.
+# WASM tool sandboxing is framework-level and cannot be disabled.
+
+# ---------------------------------------------------------------------------
+# Embeddings (OpenAI text-embedding-3-large, scoped key in .env)
+# ---------------------------------------------------------------------------
+[embeddings]
+enabled = true
+provider = "openai"
+model = "text-embedding-3-large"
+
+# ---------------------------------------------------------------------------
+# Safety (credential/sensitive-path blocklist is framework-level, v0.25.0 #1675)
+# ---------------------------------------------------------------------------
+# No explicit block -- v0.25.0 defaults cover OpenRouter / Anthropic OAuth /
+# Telegram / Groq credential patterns and ~/.ssh, ~/.aws, ~/.env, etc.
+
+# ---------------------------------------------------------------------------
+# Notes on external services (documentation only -- not IronClaw-managed)
+# ---------------------------------------------------------------------------
+#   Smart Router (Phase 9):  http://127.0.0.1:3100
+#   Web upload page (7.5):   http://ironclaw-mini.local:3200
+#   Gateway (this profile):  http://127.0.0.1:3001
+#   Ollama (Phase 3):        http://localhost:11434
+# Keep these ports collision-free.
