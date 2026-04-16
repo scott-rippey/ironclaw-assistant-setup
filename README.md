@@ -13,6 +13,7 @@ designed for Claude Code to walk you through the build on the Mac Mini.
 | File / folder | Purpose |
 |---------------|---------|
 | [`ironclaw-mac-mini-setup-guide-v5.1.md`](./ironclaw-mac-mini-setup-guide-v5.1.md) | The complete setup guide. Phase-by-phase build, architecture decisions, threat model, Smart Router implementation, maintenance. **Start here.** |
+| [`ironclaw-mac-mini-setup-checklist-v5.1.md`](./ironclaw-mac-mini-setup-checklist-v5.1.md) | Build progress tracker. Claude Code checks items as each step completes so you know where to pick up next session. |
 | [`CLAUDE.md`](./CLAUDE.md) | Project instructions for Claude Code. Drop this into the Mac Mini working folder alongside the guide so Claude Code has full context during build and maintenance sessions. |
 | [`v5-templates/`](./v5-templates/) | Starting templates copied into `~/.ironclaw/` during Phase 4: deployment profile (`ironclaw-mac-mini.toml`), workspace identity files (`IDENTITY.md`, `SOUL.md`, `USER.md`, `HEARTBEAT.md`), `PEOPLE-schema.md` convention doc. |
 
