@@ -7,8 +7,8 @@ Planning, documentation, and build spec for setting up a dedicated M4 Mac Mini a
 ## Key Files (public repo)
 
 - **`README.md`** -- Public repo landing page.
-- **`ironclaw-mac-mini-setup-guide-v5.0.md`** -- THE primary document. Current setup guide. When setting up the Mac Mini with Claude Code, this is the spec to follow.
-- **`v5-templates/`** -- Starting templates referenced by the v5.0 guide. Copy to `~/.ironclaw/` during Phase 4. Contains `ironclaw-mac-mini.toml`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `PEOPLE-schema.md`, and a README explaining the convention.
+- **`ironclaw-mac-mini-setup-guide-v5.1.md`** -- THE primary document. Current setup guide. When setting up the Mac Mini with Claude Code, this is the spec to follow.
+- **`v5-templates/`** -- Starting templates referenced by the v5.1 guide. Copy to `~/.ironclaw/` during Phase 4. Contains `ironclaw-mac-mini.toml`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `PEOPLE-schema.md`, and a README explaining the convention.
 - **`CLAUDE.md`** (this file) -- Project instructions for Claude Code during build + maintenance sessions.
 
 ## Local-Only Files (gitignored, not in public repo)
@@ -17,25 +17,25 @@ Planning, documentation, and build spec for setting up a dedicated M4 Mac Mini a
 - **`docs/SESSION_LOG.md`** -- Log of planning sessions via `/log` during development. Personal.
 - **`.claude/`** -- Claude Code session state.
 
-## Architecture Decisions (Summary -- v5.0)
+## Architecture Decisions (Summary -- v5.1)
 
-- **Human-in-the-loop is a security boundary.** Agent always drafts, always asks, never sends externally without explicit approval via Discord `#approvals`. Encoded at the infrastructure level via the per-tool permission table (Phase 5.5 of the v5.0 guide). Email sends, calendar invites sent, and external DMs are hard-locked via `ApprovalRequirement::Always` and cannot be made `AlwaysAllow`.
+- **Human-in-the-loop is a security boundary.** Agent always drafts, always asks, never sends externally without explicit approval via Discord `#approvals`. Encoded at the infrastructure level via the per-tool permission table (Phase 5.5 of the v5.1 guide). Email sends, calendar invites sent, and external DMs are hard-locked via `ApprovalRequirement::Always` and cannot be made `AlwaysAllow`.
 - **`memory_write = AskEachTime` PERMANENTLY.** v0.25.0's tool permissions are per-tool-name only — no path-level granularity. Until IronClaw ships path-level permissions (or we build a custom `commitment_file_signal` wrapper), every memory write prompts for approval. This protects identity files (IDENTITY.md, SOUL.md, USER.md, HEARTBEAT.md) at the cost of silent commitment auto-capture. The security/UX tradeoff is intentional.
-- **Discord for structured communication.** Private server with dedicated channels (`#general`, `#approvals`, `#research`, `#file-uploads`, `#heartbeat`, `#commitments` (v5.0 NEW), `#cost-tracking`, `#system-alerts`, `#memory`, `#router`). Per-channel notification control. Slash commands. Interactive buttons for approval flows.
-- **Workspace identity files:** well-known files (IDENTITY.md, SOUL.md, USER.md, PEOPLE/, HEARTBEAT.md, MEMORY.md, commitments/) injected into every LLM call. Identity files are deletion-protected and auto-versioned by v0.25.0. The Phase 4b Identity Interview in the v5.0 guide is a ~90-min scripted intake that populates these files with real content using Claude Code.
+- **Discord for structured communication.** Private server with dedicated channels (`#general`, `#approvals`, `#research`, `#file-uploads`, `#heartbeat`, `#commitments` (v5.1 NEW), `#cost-tracking`, `#system-alerts`, `#memory`, `#router`). Per-channel notification control. Slash commands. Interactive buttons for approval flows.
+- **Workspace identity files:** well-known files (IDENTITY.md, SOUL.md, USER.md, PEOPLE/, HEARTBEAT.md, MEMORY.md, commitments/) injected into every LLM call. Identity files are deletion-protected and auto-versioned by v0.25.0. The Phase 4b Identity Interview in the v5.1 guide is a ~90-min scripted intake that populates these files with real content using Claude Code.
 - **Commitments system (v0.25.0):** 5 core skills installed (commitment-setup, commitment-triage, commitment-digest, decision-capture, delegation-tracker). Persona bundles (`ceo-assistant` etc.) SKIPPED — our persona is bespoke in SOUL.md. `retention_days = 365` for `commitments/resolved/`.
 - **Hybrid local/API model strategy:** Qwen 3.5 27B via Ollama for 90%+ of tasks. Sonnet 4.6 via Anthropic API for quality-critical work. Haiku 4.5 as automatic fallback if Sonnet is unavailable. Gemma 4 31B is a reasonable alternative for bake-off evaluation at build time (comparison notes in `archive/gemma4-vs-qwen-comparison.md` locally).
 - **Always use model aliases** (e.g., `claude-sonnet-4-6-latest`) not specific version IDs.
 - **Embeddings:** OpenAI `text-embedding-3-large` (scoped API key, no generative model access).
-- **Google integration via BUNDLED tools (v5.0 change):** `tools-src/gmail` and `tools-src/google-calendar` ship with IronClaw. Installed via `ironclaw tool install gmail google-calendar` or via the setup wizard. OAuth flow uses IronClaw's ephemeral callback listener at `127.0.0.1:9876` with `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from `.env`. Desktop app OAuth client in Google Cloud Console.
-- **Calendar visibility of user's calendar via Google Calendar SHARING (v5.0 change).** User shares primary calendar with `agent@yourdomain.com` at "See only free/busy (hide details)." Not an OAuth grant. Simpler, revocable with one click at Google's end, no separate secret_name.
-- **Installation via Homebrew (v5.0 change):** `brew install ironclaw`. Source build is Appendix A of the v5.0 guide — for local patching only.
-- **Deployment profile: `ironclaw-mac-mini.toml` inheriting from `local`.** NOT `local-sandbox`. We don't run arbitrary code. See "About Sandboxing (Two Kinds)" in the v5.0 guide for the WASM-vs-Docker distinction.
+- **Google integration via BUNDLED tools (v5.1 change):** `tools-src/gmail` and `tools-src/google-calendar` ship with IronClaw. Installed via `ironclaw tool install gmail google-calendar` or via the setup wizard. OAuth flow uses IronClaw's ephemeral callback listener at `127.0.0.1:9876` with `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from `.env`. Desktop app OAuth client in Google Cloud Console.
+- **Calendar visibility of user's calendar via Google Calendar SHARING (v5.1 change).** User shares primary calendar with `agent@yourdomain.com` at "See only free/busy (hide details)." Not an OAuth grant. Simpler, revocable with one click at Google's end, no separate secret_name.
+- **Installation via Homebrew (v5.1 change):** `brew install ironclaw`. Source build is Appendix A of the v5.1 guide — for local patching only.
+- **Deployment profile: `ironclaw-mac-mini.toml` inheriting from `local`.** NOT `local-sandbox`. We don't run arbitrary code. See "About Sandboxing (Two Kinds)" in the v5.1 guide for the WASM-vs-Docker distinction.
 - **Engine: start on v1.** v0.25.0 ships engine v2 (Thread/Capability/CodeAct) but we start on v1 for stability. 60-day bake-off on a cloned workspace before considering v2 migration. `ENGINE_V2=false` in `.env`.
 - **LLM config:** `LLM_BACKEND=ollama` for direct Ollama. `LLM_BACKEND=openai_compatible` only when pointing at the Smart Router proxy (Phase 9).
 - **Ports:** 3001 gateway, 3100 Smart Router, 3200 web upload page, 9876 OAuth callback listener (ephemeral), 11434 Ollama.
 - **Config precedence (v0.25.0 unified):** `DB/TOML > env > default` for ALL non-credential settings. Credentials stay env-only. **Policy: never change non-credential config via the web UI settings tab. Read-only inspection only.**
-- **Backups (v5.0 expanded):** 7 days local for BOTH pg_dump AND `~/.ironclaw/` workspace tar.gz. 30 days offsite (encrypted to agent's Google Drive). Commitments, identity files, PEOPLE, and .system/ live on disk, not in Postgres — the workspace backup covers those.
+- **Backups (v5.1 expanded):** 7 days local for BOTH pg_dump AND `~/.ironclaw/` workspace tar.gz. 30 days offsite (encrypted to agent's Google Drive). Commitments, identity files, PEOPLE, and .system/ live on disk, not in Postgres — the workspace backup covers those.
 - **Heartbeat:** Observation-only. Tasks defined in HEARTBEAT.md. Flags to Discord channels (`#heartbeat`, `#commitments`, `#cost-tracking`, `#system-alerts`), never acts externally. 90-day observation period.
 - **Document ingestion:** Discord file uploads (`#file-uploads` channel) + web upload page (Phase 7.5). Both needed before seeding the brain.
 - **Smart Router alerts:** Discord webhooks for fire-and-forget notifications to channel-specific webhook URLs (`#system-alerts`, `#cost-tracking`, `#router`). All communication encrypted via HTTPS/WSS.
@@ -60,8 +60,8 @@ IronClaw has TWO sandbox layers. Don't conflate them.
 - **Do not use the IronClaw web UI settings tab (port 3001) to change non-credential config.** Read-only inspection only. All config lives in `.env`, the profile TOML, or (for credentials) macOS Keychain.
 - **Do not relax `memory_write` to `AlwaysAllow`** without first building a custom wrapper tool that protects identity file paths. Security over silent UX.
 - **Do not use `local-sandbox` profile** unless the switch-triggers above apply. Our setup doesn't benefit from Docker sandboxing.
-- **Do not hand-roll Gmail or Calendar OAuth** — use the bundled `tools-src/gmail` and `tools-src/google-calendar` tools. This is a v5.0 correction from the v4.3 plan.
-- **Do not OAuth-grant the agent access to the user's personal Google account.** The agent sees the user's calendar availability via Google Calendar SHARING (free/busy only), not OAuth. There is no second OAuth grant in v5.0.
+- **Do not hand-roll Gmail or Calendar OAuth** — use the bundled `tools-src/gmail` and `tools-src/google-calendar` tools. This is a v5.1 correction from the v4.3 plan.
+- **Do not OAuth-grant the agent access to the user's personal Google account.** The agent sees the user's calendar availability via Google Calendar SHARING (free/busy only), not OAuth. There is no second OAuth grant in v5.1.
 - **Do not enable `ENGINE_V2=true`** before the 60-day retro bake-off on a cloned workspace.
 - **Do not install Composio.** Data privacy — Composio routes through `backend.composio.dev`. Bundled IronClaw tools do what we need without that privacy cost.
 - **Do not install persona bundles** (`ceo-assistant`, `content-creator-assistant`, `trader-assistant`). Our persona is bespoke in SOUL.md.
@@ -82,7 +82,7 @@ IronClaw has TWO sandbox layers. Don't conflate them.
 ## Repository and Build Directory Topology
 
 **This project repo** (Mac Mini, or wherever planning happens):
-- Planning docs, v5.0 setup guide, feature discussion docs.
+- Planning docs, v5.1 setup guide, feature discussion docs.
 - `v5-templates/` with profile TOML and identity file templates.
 - Goes to GitHub (your main account). Public-ish per our commit rule.
 - Contains NO real user data, NO secrets, NO populated workspace files.
@@ -106,11 +106,11 @@ IronClaw has TWO sandbox layers. Don't conflate them.
 
 **Global rule:** "Commit CLAUDE.md and docs folder to GitHub" — applies to most projects.
 
-**Exception for this repo:** `docs/` is gitignored here because it contains `SESSION_LOG.md` which is personal planning history. CLAUDE.md itself IS committed to the public repo. This keeps the public-facing repo clean (just CLAUDE.md, v5.0 guide, v5-templates/, README.md) while letting local planning (archive/, docs/, .claude/) stay off GitHub.
+**Exception for this repo:** `docs/` is gitignored here because it contains `SESSION_LOG.md` which is personal planning history. CLAUDE.md itself IS committed to the public repo. This keeps the public-facing repo clean (just CLAUDE.md, v5.1 guide, v5-templates/, README.md) while letting local planning (archive/, docs/, .claude/) stay off GitHub.
 
 This global rule also does NOT apply to the live `~/.ironclaw/` workspace on the Mac Mini — that follows the separate selective-backup flow (agent's private GitHub repo during maintenance sessions only).
 
-## Build Phases (v5.0)
+## Build Phases (v5.1)
 
 1. Mac Mini base setup (macOS user, Homebrew, Postgres, FileVault, firewall, backup crons for DB + workspace)
 2. Install IronClaw (`brew install ironclaw`)

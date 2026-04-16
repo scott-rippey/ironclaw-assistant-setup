@@ -7,3 +7,12 @@ docs/
 
 # macOS
 .DS_Store
+
+# Node.js (Phase 9 Smart Router + Phase 7.5 web upload page)
+node_modules/
+*.log
+*.swp
+
+# Environment files (should never be committed)
+.env
+.env.local

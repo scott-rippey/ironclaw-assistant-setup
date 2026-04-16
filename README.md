@@ -3,6 +3,8 @@
 Setup guide and templates for running [IronClaw](https://github.com/nearai/ironclaw)
 as a secure, persistent personal AI assistant on a dedicated M4 Mac Mini.
 
+**Current version:** v5.1 (April 15, 2026) | **IronClaw baseline:** v0.25.0+
+
 This is a **planning and specification** repo, not a code repo. The guide is
 designed for Claude Code to walk you through the build on the Mac Mini.
 
@@ -10,7 +12,7 @@ designed for Claude Code to walk you through the build on the Mac Mini.
 
 | File / folder | Purpose |
 |---------------|---------|
-| [`ironclaw-mac-mini-setup-guide-v5.0.md`](./ironclaw-mac-mini-setup-guide-v5.0.md) | The complete setup guide. Phase-by-phase build, architecture decisions, threat model, Smart Router implementation, maintenance. **Start here.** |
+| [`ironclaw-mac-mini-setup-guide-v5.1.md`](./ironclaw-mac-mini-setup-guide-v5.1.md) | The complete setup guide. Phase-by-phase build, architecture decisions, threat model, Smart Router implementation, maintenance. **Start here.** |
 | [`CLAUDE.md`](./CLAUDE.md) | Project instructions for Claude Code. Drop this into the Mac Mini working folder alongside the guide so Claude Code has full context during build and maintenance sessions. |
 | [`v5-templates/`](./v5-templates/) | Starting templates copied into `~/.ironclaw/` during Phase 4: deployment profile (`ironclaw-mac-mini.toml`), workspace identity files (`IDENTITY.md`, `SOUL.md`, `USER.md`, `HEARTBEAT.md`), `PEOPLE-schema.md` convention doc. |
 
@@ -35,7 +37,7 @@ background monitoring.
 
 ## How to use this repo
 
-1. **Read the guide** (`ironclaw-mac-mini-setup-guide-v5.0.md`) end-to-end before touching any hardware. It's written as a spec; reading through builds the mental model.
+1. **Read the guide** (`ironclaw-mac-mini-setup-guide-v5.1.md`) end-to-end before touching any hardware. It's written as a spec; reading through builds the mental model.
 2. **On the Mac Mini:** clone this repo to the agent's user account (e.g. `~/ironclaw-setup/`), fire up Claude Code in that directory, and follow the guide with Claude Code as your build partner.
 3. **Templates in `v5-templates/`** get copied into `~/.ironclaw/` during Phase 4. They are starting scaffolds. Phase 4b (Identity Interview) is a ~90-minute scripted session where Claude Code walks you through populating them with your real content.
 4. **Your populated workspace files** (IDENTITY.md with your name filled in, PEOPLE/ with real contacts, etc.) should live in a *separate private repo* under your agent's GitHub account -- never committed back to this repo. This repo stays template-only.

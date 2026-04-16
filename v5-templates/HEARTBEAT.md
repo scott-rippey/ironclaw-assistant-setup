@@ -17,6 +17,14 @@ it needs will prompt [Your Name] the same as any other caller.
 90-day observation period applies. Review the `heartbeat_log` table weekly for the
 first month to tune this file.
 
+**About thresholds (intentionally undefined here):** checks below use phrasing like
+"alert if unresponsive" or "flag stale" without specifying exact timeouts, staleness
+windows, or consecutive-failure counts. This is deliberate -- we don't have data yet
+on what's signal vs. noise for this deployment. The agent uses its defaults initially
+(roughly: 5-10 second network timeouts, single-failure alerts, 30-day staleness).
+Tune these based on Phase 8 calibration observations and the 30/60-day retro data.
+When you tune, update this file with the explicit thresholds you landed on.
+
 ---
 
 ## Project Context Review (daily 9am)

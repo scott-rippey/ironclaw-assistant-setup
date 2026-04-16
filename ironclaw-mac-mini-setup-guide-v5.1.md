@@ -1,4 +1,4 @@
-# IronClaw Mac Mini AI Assistant: Setup Guide v5.0
+# IronClaw Mac Mini AI Assistant: Setup Guide v5.1
 
 ## Project Overview
 
@@ -141,10 +141,10 @@ With ~24GB available for model inference, Qwen 3.5 27B (Q4_K_M) is the best loca
 
 **Context window safety:** If the model hits its context boundary mid-tool-call, IronClaw automatically discards the truncated call rather than attempting to execute a half-formed operation. Framework-level, no config needed.
 
-Install:
+Install (uses `brew services` for auto-start on boot, so Ollama survives reboots):
 ```bash
 brew install ollama
-ollama serve
+brew services start ollama
 ollama pull qwen3.5:27b
 ```
 
@@ -367,12 +367,25 @@ Other agent frameworks (particularly OpenClaw) suffer from "context rot" where a
 - **Mitigation:** `memory_write = AskEachTime` permanently (see Identity File Protection). Every identity file write prompts for approval. Auto-versioning means even an approved-then-regretted write is recoverable. Deletion of identity files is blocked entirely by v0.25.0's `is_identity_document()` check.
 - **Validate (Phase 8):** Ask the agent to "update IDENTITY.md with the following..." -- verify it prompts for approval before writing.
 
-### API Key Scoping
+**8. Skill or routine installation as an indirect trust boundary (v5.0)**
+- **Risk:** When you approve `skill_install` or `routine_create`, you're approving everything that skill or routine's code might do -- including writes to workspace files that bypass the `memory_write = AskEachTime` gate because they run as part of skill initialization, not as direct tool calls. A malicious third-party skill could silently alter IDENTITY.md during its install hook.
+- **Likelihood:** Low (only matters if you install untrusted skills) | **Impact:** High (if it happens, it bypasses the identity-file protection we paid UX cost for)
+- **Mitigation (operational, not technical):**
+  - Prefer IronClaw's bundled skills (commitment-triage, commitment-digest, decision-capture, delegation-tracker, commitment-setup) and vetted skills from ClawHub.
+  - Before approving `skill_install` from any third-party source, read the SKILL.md and any linked code. Treat skill approval as the same class of decision as running an installer script -- because that's what it is.
+  - Avoid third-party community skills that do not have audit-friendly source.
+- **Mitigation (monitoring):** Monthly audit of installed skills (see Ongoing Maintenance). Check what's installed against what you remember approving; investigate any drift.
+- **Future technical mitigation (deferred):** A custom wrapper tool that intercepts writes to identity-file paths, applying approval regardless of the calling context (direct tool use or skill-init). This is real engineering work and we don't have enough usage data to design it well yet. Revisit once we have 60-90 days of real skill/routine usage patterns to inform what the wrapper needs to catch.
+- **Validate (Phase 8):** Not directly testable without a crafted malicious skill. Best proxy: during the 60-day retro, audit the `skills/` directory and compare installed skills against what you remember approving.
+
+### API Key and Token Scoping
 
 - **Anthropic API Key** -- Scoped to a dedicated Workspace with spend cap. Max exposure: your spend limit.
 - **OpenAI Key (embeddings)** -- Project scoped to `text-embedding-3-large` only. Minimal cost exposure if leaked.
 - **Google OAuth** -- Agent's account only: Gmail send/readonly, Calendar events/readonly. If leaked: attacker can draft/send from agent's email and create events on agent's calendar. Cannot access your personal account. Revoke and rotate immediately.
 - **Google Calendar sharing** -- Your personal calendar shared with `agent@yourdomain.com` at "free/busy only." Revocable with one click in Google Calendar settings. No tokens involved; sharing is at Google's account level.
+- **GitHub Personal Access Token (agent's config backup repo)** -- Create a **fine-grained** PAT (not classic), scoped to the single private repo that backs up populated workspace files. Permissions: `Contents: Read and write`, `Metadata: Read` (required), `Pull requests: No access`, everything else: No access. Token belongs to the agent's separate GitHub account (see Phase 7) -- do NOT tie this to your personal GitHub. If leaked: attacker can read/write this one backup repo only, and cannot touch any of your personal repos. Rotate on suspicion; rotate regardless every 90-180 days as hygiene.
+- **Router auth token (`ROUTER_AUTH_TOKEN`)** -- Generated locally via `openssl rand -base64 32`. Used only by the Discord slash command handler to authenticate to the Smart Router's `/router/mode` endpoint on localhost. Not transmitted off-device. If leaked to a local process running as `ironclawagent`: the attacker can change routing modes; but that same process has broader access anyway, so this is belt-and-suspenders only.
 
 ---
 
@@ -608,11 +621,12 @@ If you need to patch IronClaw locally (rare), see Appendix A for source-build in
 
 ### Phase 3: Set Up Local Model via Ollama
 
-1. **Install and start Ollama:**
+1. **Install and start Ollama as a persistent service:**
    ```bash
    brew install ollama
-   ollama serve
+   brew services start ollama
    ```
+   Using `brew services start` (instead of `ollama serve` in the foreground) registers Ollama with launchd so it auto-starts on reboot and restarts if it crashes. Verify it's running: `brew services list | grep ollama` should show status `started`.
 2. **Pull your primary local model:**
    ```bash
    ollama pull qwen3.5:27b
@@ -641,7 +655,7 @@ mkdir -p ~/.ironclaw/profiles
 cp v5-templates/ironclaw-mac-mini.toml ~/.ironclaw/profiles/
 ```
 
-The profile inherits from `local` (no Docker sandbox -- see rationale below) and bundles our opinionated defaults: ports (3001 gateway, 3100 router, 3200 upload), heartbeat 30-min interval, TUI mode, parallelism, commitments retention_days=365.
+The profile inherits from `local` (no Docker sandbox -- see rationale below) and bundles our opinionated IronClaw defaults: gateway host and port (127.0.0.1:3001), heartbeat 30-min interval, TUI mode, parallelism, embeddings provider. Note: ports 3100 (Smart Router) and 3200 (web upload page) are external services not managed by the profile — they're set in Phase 9 and Phase 7.5 respectively. Commitments retention (`retention_days=365`) is NOT in the profile — it's set as `.config` metadata on the `commitments/` directory when you run `/commitment-setup` in Phase 4c.
 
 **Why `local` and not `local-sandbox`:** our threat model is API calls + workspace I/O. Every tool we run (Gmail, Calendar, Discord, web search, memory) is an API call or disk read/write -- none benefit from Docker sandboxing. We are NOT a coding agent (no `shell` tool, no CodeAct). The `local` profile is simpler: one fewer daemon, no Docker Desktop, less to fail.
 
@@ -699,6 +713,11 @@ GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 # Callback URL default is http://127.0.0.1:9876 (ephemeral listener) -- override via IRONCLAW_OAUTH_CALLBACK_URL if needed
 
+# Smart Router (Phase 9) -- auth token for /router/mode endpoint.
+# Generate once: openssl rand -base64 32
+# Discord bot slash command handler must send this as `Authorization: Bearer <token>`.
+ROUTER_AUTH_TOKEN=generate-with-openssl-rand
+
 # Keep your Anthropic API key available for quality-critical tasks
 # ANTHROPIC_API_KEY=sk-ant-...
 ```
@@ -737,6 +756,15 @@ mkdir -p ~/.ironclaw/PEOPLE
 
 ### Phase 4.5: Google Cloud Setup (for bundled Gmail + Calendar tools)
 
+**Before starting Phase 4.5, decide the agent's Google account email address.** The rest of the guide uses `agent@yourdomain.com` as a placeholder. In practice, pick one of:
+
+- A Google Workspace address like `agent@yourdomain.com` — ~$7/month per user, professional appearance when the agent emails clients, 30GB Drive (used for encrypted backups), admin controls. Recommended if you own a domain.
+- A free Gmail address like `yourname.agent@gmail.com` — no cost, simpler to start, easy to walk back.
+
+You'll finalize this in Phase 4b's Identity Interview, but you need a working Google account signed in and the corresponding email address chosen NOW to configure OAuth in this phase.
+
+**Naming consistency tip:** the guide throughout assumes your local macOS user is `ironclawagent` (no space, matches IronClaw's `~/.ironclaw/` convention). If you named your macOS user something else, every path reference like `/Users/ironclawagent/...` needs to be adjusted. Easiest to just use `ironclawagent` as the username if you haven't created it yet.
+
 1. **Create a Google Cloud project:** Go to console.cloud.google.com, create "IronClaw Agent" tied to the agent's Google account (`agent@yourdomain.com`).
 2. **Enable APIs:**
    - Gmail API
@@ -760,15 +788,22 @@ mkdir -p ~/.ironclaw/PEOPLE
 3. **Add `agent@yourdomain.com`** with permission **"See only free/busy (hide details)"**.
 4. Done. The agent's Calendar tool (installed in Phase 5) will see your availability as if it were its own calendar, through Google's native delegation.
 
-No OAuth grant to your account is involved. Sharing is revocable with one click in the same settings page. This is simpler and more secure than v4.3's planned read-only OAuth approach.
+No OAuth grant to your account is involved. Sharing is revocable with one click in the same settings page. This is materially more secure than v4.3's planned read-only OAuth approach, for several concrete reasons:
 
-### Phase 4b: Identity Interview (v5.0 -- NEW, ~90 min)
+- **Revocation is simpler.** Revoking Calendar sharing is a single click in Google Calendar settings on your account. Revoking an OAuth grant means finding and removing it from your Google Account's third-party access list, and also cleaning up the token in IronClaw's `secrets` table -- two steps that are easier to leave half-done.
+- **No token theft surface.** With OAuth, a stolen access or refresh token from the `secrets` table would grant the attacker read access to your calendar. With sharing, there is no token for your account on the agent -- the agent only has its own credentials, and delegation happens at Google's account layer. Compromising IronClaw's secrets gives the attacker the agent's Google access, never your account.
+- **Uses Google's native permission model instead of scope delegation.** OAuth scopes are what Google authorizes; sharing permissions are what you, the calendar owner, authorize. The free/busy-only share is the tightest permission Google supports -- an OAuth `calendar.readonly` grant, by contrast, exposes event titles, participants, and descriptions, not just availability.
+- **No scope creep risk.** If IronClaw ever requests broader calendar scopes in a future update, an OAuth grant could be silently upgraded on re-auth. Sharing stays at "free/busy only" regardless of what IronClaw asks for.
+
+### Phase 4b: Identity Interview (v5.0 -- NEW)
 
 This is the heart of the "make it yours" phase. Structural templates are in place; now Claude Code on the Mac Mini walks you through populating them with real content. **Fire up Claude Code now if it isn't already running.** Point it at this setup guide so it has the scripts below in context.
 
-**Structure (~90 min total):**
+**How this phase runs:** Claude Code reads the 7 steps below and conducts the interview live -- asking the questions, waiting for your answers, and editing the four target files in `~/.ironclaw/` as you go (`IDENTITY.md`, `SOUL.md`, `USER.md`, `HEARTBEAT.md`, plus new files under `~/.ironclaw/PEOPLE/`). You don't need any special CC command; just tell it "Let's do the Phase 4b Identity Interview" and it will step through. If CC disconnects mid-interview, the work done so far is already saved to disk -- re-invoke CC, tell it "continue the Identity Interview from step N," and it picks up.
 
-#### 1. Agent-Naming Moment (~5 min)
+**Structure (7 steps):**
+
+#### 1. Agent-Naming Moment
 
 Claude Code asks:
 - What do you want to call your agent? (name)
@@ -777,7 +812,7 @@ Claude Code asks:
 
 Output: updates the `your name is [pick a name or just "Agent"]` line in IDENTITY.md and seeds the top of SOUL.md.
 
-#### 2. SOUL.md Deep Interview (~15-20 min)
+#### 2. SOUL.md Deep Interview
 
 Claude Code walks through open-ended questions:
 - When you write, what do you avoid? (em dashes, emojis, exclamation points, corporate-speak, hedging language, etc.)
@@ -789,9 +824,9 @@ Claude Code walks through open-ended questions:
 - When the agent is uncertain, how should it communicate that? (flag explicitly / caveat softly / ask for clarification)
 - How should the agent handle pet peeves in incoming messages? (mirror them / neutralize them / flag them)
 
-Output: SOUL.md populated with sections for Communication Style, Values, Writing Preferences, Handling Uncertainty.
+Output: SOUL.md populated with sections for Communication Style, Values, Writing Preferences, Handling Uncertainty, and Pet Peeves / Anti-Patterns.
 
-#### 3. USER.md Deep Interview (~15-20 min)
+#### 3. USER.md Deep Interview
 
 Scripted sections. Claude Code walks each:
 - **Role / business:** What do you do, what does your business look like, who do you work with?
@@ -805,7 +840,7 @@ Scripted sections. Claude Code walks each:
 
 Output: USER.md with fully populated sections replacing the placeholder template.
 
-#### 4. IDENTITY.md Personalization Pass (~5 min)
+#### 4. IDENTITY.md Personalization Pass
 
 Claude Code goes line-by-line:
 - Fill `[Your Name]` → your name
@@ -816,7 +851,7 @@ Claude Code goes line-by-line:
 
 Output: IDENTITY.md with no bracketed placeholders remaining.
 
-#### 5. HEARTBEAT.md Review (~10 min)
+#### 5. HEARTBEAT.md Review
 
 Claude Code walks the concrete checklist:
 - Timing adjustments (is daily 9am the right "Project Context Review" time for your schedule?)
@@ -826,7 +861,7 @@ Claude Code walks the concrete checklist:
 
 Output: HEARTBEAT.md tuned to your actual schedule and concerns.
 
-#### 6. PEOPLE/ Pattern-Setting (~15-20 min)
+#### 6. PEOPLE/ Pattern-Setting
 
 - Claude Code asks: "Who are your 3-5 most important ongoing contacts right now?"
 - Walk the first contact in full detail: discuss what "Context" should actually capture (history, preferences, quirks, useful background), what level of detail is useful, what to leave out. This sets the pattern.
@@ -920,6 +955,15 @@ This creates `~/.ironclaw/commitments/open/`, `~/.ironclaw/commitments/resolved/
 
 7. **Register guild-specific slash commands** (instant deployment, no propagation delay):
 
+   **How registration happens:** IronClaw's Discord WASM channel auto-registers all slash commands with Discord on startup when it connects to the Gateway. You don't register them manually in the Developer Portal. For auto-registration to work:
+
+   - The bot invite URL must include the `applications.commands` OAuth scope (in addition to `bot`). If you used the Developer Portal's OAuth2 URL Generator, check both boxes: `bot` AND `applications.commands`. If you missed this, the commands won't appear; re-invite the bot with both scopes.
+   - `DISCORD_GUILD_ID` must be set in `~/.ironclaw/.env` for guild-specific registration (instant propagation). Global commands (without `DISCORD_GUILD_ID`) take up to 1 hour to propagate.
+   - After IronClaw first starts with the Discord channel enabled (Phase 8), wait ~30 seconds and check Discord's `/` autocomplete in any channel of your server. All commands below should appear.
+   - If commands don't appear: check `tail -20 ~/logs/ironclaw-stderr.log` for registration errors -- typically "missing applications.commands scope" or an invalid bot token.
+
+   **Commands registered (for reference -- you don't have to type these into Discord's portal):**
+
    **Memory commands:**
    - `/memory search <query>`
    - `/memory recent [count]`
@@ -956,11 +1000,14 @@ This creates `~/.ironclaw/commitments/open/`, `~/.ironclaw/commitments/resolved/
    Or via the web gateway's Extensions tab, or via the `ironclaw onboard` multi-select if you deferred from Phase 4.
 
    **On first use** (e.g., the agent tries to send an email or read the calendar):
-   - IronClaw spins up the ephemeral OAuth listener on `127.0.0.1:9876`
-   - OAuth URL surfaces in Discord (or chat)
-   - You click the URL, log into **the agent's Google account** (`agent@yourdomain.com`), grant the scopes
-   - Callback hits the listener; tokens land encrypted in the `secrets` table; listener shuts down (5-min timeout if you stall)
-   - Agent resumes. Refresh tokens auto-renew; no re-auth unless revoked.
+   - IronClaw spins up the ephemeral OAuth listener on `127.0.0.1:9876` on the Mac Mini
+   - The OAuth authorization URL is posted to Discord (in the channel where the originating request came from -- typically `#general` or `#approvals`) AND also logged to IronClaw's stdout (visible via `tail -f ~/logs/ironclaw-stdout.log` if you're SSH'd in)
+   - **Where to click the URL:** the URL points to `accounts.google.com/...` and the redirect is `http://127.0.0.1:9876`. The redirect ONLY works when opened in a browser that can reach the Mac Mini's loopback. In practice, this means you need to open the URL **in a browser running ON the Mac Mini itself** (either via Screen Sharing into the Mac Mini, or by pasting the URL into a browser on the Mac Mini via SSH-forwarded clipboard, etc.). If you open the URL on your iMac or phone, the `accounts.google.com` part works fine, but the final redirect to `127.0.0.1:9876` will hit YOUR device's localhost (not the Mac Mini's) and fail.
+   - **Easiest path:** Screen Share into the Mac Mini, open the Discord message there, click the URL in the Mac Mini's browser, complete the Google consent screen, and the redirect closes the loop.
+   - Log into **the agent's Google account** (`agent@yourdomain.com`), grant the scopes (Gmail send/readonly, Calendar events/readonly)
+   - Callback hits the listener on `127.0.0.1:9876`; tokens land encrypted in the `secrets` table; listener shuts down (5-min timeout if you stall)
+   - Agent resumes. Refresh tokens auto-renew for ~6 months; no re-auth unless revoked or refresh token expires.
+   - **This is a one-time setup per Google scope.** After the first successful OAuth, subsequent Gmail/Calendar operations use the stored tokens silently.
 
 9. **Set up the file upload handler** in #file-uploads:
    - Bot watches for attachments in `#file-uploads`
@@ -1005,7 +1052,8 @@ v0.25.0's per-user tool permission system (#1911) makes our human-in-the-loop po
 | `memory_write` | **AskEachTime (permanent)** | Identity file protection -- see Identity File Protection section |
 | `time` / `json` / `echo` | AlwaysAllow | Trivial |
 | `web_search` | AlwaysAllow | Core capability, read-only external |
-| `shell` / file execution | **Disabled** | Not a coding agent -- tool not offered to the LLM at all |
+| `shell` | **Disabled** | Not a coding agent -- shell tool not offered to the LLM at all |
+| `file_write` / `file_execute` / any code-execution tool | **Disabled** | Same rationale -- Disable any tool that runs arbitrary code or writes to the filesystem outside workspace |
 | Gmail read (agent's own inbox, incl. forwarded mail) | AlwaysAllow | Agent's own mail |
 | Gmail send (from agent's account) | `ApprovalRequirement::Always` hard-lock | External action |
 | Calendar read (your calendar, via Google sharing) | AlwaysAllow | Free/busy read via Google delegation |
@@ -1034,7 +1082,26 @@ v0.25.0's per-user tool permission system (#1911) makes our human-in-the-loop po
    - Set a spend limit on the project
    - Use this key in your IronClaw embedding configuration
 
-3. **Offsite backup to agent's Google Drive:**
+3. **Generate and store the backup passphrase (v5.0 -- CRITICAL):**
+
+   The offsite backup pipeline encrypts every backup with GPG before uploading. The encryption passphrase lives on the Mac Mini at `~/.ironclaw/backup-passphrase` and is referenced by the cron jobs below. Generate it once:
+
+   ```bash
+   # Generate a strong 48-byte passphrase, store locally with restricted permissions
+   openssl rand -base64 48 > ~/.ironclaw/backup-passphrase
+   chmod 600 ~/.ironclaw/backup-passphrase
+   ```
+
+   **CRITICAL: ALSO save this same passphrase to your secrets manager** (1Password, Bitwarden, Doppler, or whatever you use) in the same entry as your Mac Mini FileVault key. If the Mac Mini dies and you lose the local `backup-passphrase` file, the offsite backups are uselessly encrypted bricks -- Apple can't help, Google can't help, you'll have no way to decrypt what you uploaded.
+
+   Verify:
+
+   ```bash
+   cat ~/.ironclaw/backup-passphrase    # should show ~64 random base64 characters
+   ls -la ~/.ironclaw/backup-passphrase  # should show -rw------- (mode 600)
+   ```
+
+4. **Offsite backup to agent's Google Drive:**
 
    v5.0 backs up both the database AND the workspace directory.
 
@@ -1047,10 +1114,10 @@ v0.25.0's per-user tool permission system (#1911) makes our human-in-the-loop po
 
    # Add to crontab after pg_dump + workspace tar:
    # 2:30am -- Encrypt both database and workspace backups
-   30 2 * * * gpg --symmetric --batch --passphrase-file /path/to/backup-passphrase \
+   30 2 * * * gpg --symmetric --batch --passphrase-file /Users/ironclawagent/.ironclaw/backup-passphrase \
      --cipher-algo AES256 \
      /Users/ironclawagent/backups/db/ironclaw-$(date +\%Y\%m\%d).sql.gz
-   35 2 * * * gpg --symmetric --batch --passphrase-file /path/to/backup-passphrase \
+   35 2 * * * gpg --symmetric --batch --passphrase-file /Users/ironclawagent/.ironclaw/backup-passphrase \
      --cipher-algo AES256 \
      /Users/ironclawagent/backups/workspace/ironclaw-workspace-$(date +\%Y\%m\%d).tar.gz
 
@@ -1078,10 +1145,22 @@ v0.25.0's per-user tool permission system (#1911) makes our human-in-the-loop po
    - Only Gmail API and Calendar API enabled (no extras)
    - Free/busy calendar sharing to `agent@yourdomain.com` is set up and working
    - No Drive API enabled for the agent (Drive is rclone-only for backups, separate from agent's OAuth)
-4. **Create the agent's GitHub account:**
-   - Free account tied to agent's email
-   - Create a private repo for configuration backup: workspace files (IDENTITY.md, SOUL.md, USER.md, PEOPLE/, HEARTBEAT.md), deployed profile TOML, `.env` template (placeholders only; real values NEVER committed), allowlists, scripts
-   - You commit via Claude Code during maintenance sessions
+4. **Create the agent's GitHub account (separate from your personal GitHub):**
+   - **Create a completely separate free GitHub account** tied to the agent's email (`agent@yourdomain.com`). This account should have NO connection to your personal GitHub identity -- it exists solely to back up this agent's configuration.
+   - **Create a private repo** on this agent account for configuration backup. Name suggestion: `ironclaw-mac-mini-config` or similar. This repo holds: populated workspace files (IDENTITY.md, SOUL.md, USER.md, PEOPLE/, HEARTBEAT.md), the deployed profile TOML, `.env` template (placeholders only; real values NEVER committed), allowlists, scripts.
+   - **Create a fine-grained Personal Access Token** scoped to ONLY this one repo:
+     - GitHub → Settings → Developer settings → **Personal access tokens → Fine-grained tokens** → Generate new token
+     - Name: "ironclaw-mac-mini-backup (push)"
+     - Expiration: 1 year (rotate per the scoping policy above; set a calendar reminder)
+     - Resource owner: agent account
+     - Repository access: **Only select repositories** → pick the backup repo
+     - Permissions → Repository permissions:
+       - `Contents`: **Read and write**
+       - `Metadata`: **Read** (required; auto-set)
+       - Everything else: **No access**
+   - Copy the token once (you won't see it again). Store it in your secrets manager alongside the Mac Mini FileVault key and backup passphrase.
+   - **Do NOT create a classic token.** Classic tokens have access to the entire GitHub account, which defeats the scoping you just did.
+   - Claude Code on the Mac Mini stores this token in macOS Keychain via `git credential-osxkeychain` so subsequent commits during maintenance sessions don't prompt.
 5. **Review and finalize workspace identity files.** Phase 4b populated these; now verify boundaries, communication style, and heartbeat checklist are correct with all accounts set up.
 6. **Test the leak detection** -- verify credentials aren't exposed in tool outputs (v0.25.0's expanded blocklist catches OpenRouter / Anthropic OAuth / Telegram / Groq patterns plus sensitive paths).
 7. **Send yourself a test email from the agent** -- verify draft/approve/send flow via Discord `#approvals`.
@@ -1115,15 +1194,73 @@ Both this upload page and the Discord file upload channel should work before you
 ### Phase 8: First Tasks, Calibration, and Validation
 
 1. **Start IronClaw:**
+
+   **Quick foreground start (for first-time testing):**
    ```bash
-   ironclaw start
-   # or if using launchd:
+   ironclaw
+   ```
+   This runs IronClaw in the foreground. Ctrl+C stops it. Useful for verifying things work before you daemonize.
+
+   **With debug logging (diagnostic runs):**
+   ```bash
+   RUST_LOG=ironclaw=debug ironclaw
+   ```
+
+   **Persistent background start via launchd (what you want for production):**
+
+   Create the plist:
+
+   ```xml
+   <!-- ~/Library/LaunchAgents/com.ironclaw.agent.plist -->
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+       <key>Label</key>
+       <string>com.ironclaw.agent</string>
+       <key>ProgramArguments</key>
+       <array>
+           <string>/opt/homebrew/bin/ironclaw</string>
+       </array>
+       <key>WorkingDirectory</key>
+       <string>/Users/ironclawagent</string>
+       <key>RunAtLoad</key>
+       <true/>
+       <key>KeepAlive</key>
+       <true/>
+       <key>StandardOutPath</key>
+       <string>/Users/ironclawagent/logs/ironclaw-stdout.log</string>
+       <key>StandardErrorPath</key>
+       <string>/Users/ironclawagent/logs/ironclaw-stderr.log</string>
+   </dict>
+   </plist>
+   ```
+
+   Then create the log directory and load the agent:
+
+   ```bash
+   mkdir -p ~/logs
    launchctl load ~/Library/LaunchAgents/com.ironclaw.agent.plist
    ```
-   With debug logging:
+
+   **Verify it's running and not restart-looping:**
+
    ```bash
-   RUST_LOG=ironclaw=debug ironclaw start
+   launchctl list | grep ironclaw   # should show PID and exit code 0
+   tail -20 ~/logs/ironclaw-stdout.log
+   tail -20 ~/logs/ironclaw-stderr.log
    ```
+
+   If the PID keeps changing or stderr shows crash output, `KeepAlive` may be triggering a restart loop (possible if IronClaw daemonizes itself internally). Unload, investigate logs, then reload:
+
+   ```bash
+   launchctl unload ~/Library/LaunchAgents/com.ironclaw.agent.plist
+   # fix config issue
+   launchctl load ~/Library/LaunchAgents/com.ironclaw.agent.plist
+   ```
+
+   Note: `~/Library/LaunchAgents/` is a per-user LaunchAgent location, so IronClaw starts automatically when `ironclawagent` logs into macOS. Since Tahoe doesn't bring full network up until login (see "About Sandboxing" note earlier), IronClaw auto-starts on each user login -- there's no pre-login start via this configuration.
 2. **Send a test message via Discord `#general`:** "Hello, confirm you're running and tell me your current configuration."
 3. **Test file upload:** Drop a markdown file into `#file-uploads`, verify ingestion via `/memory recent`.
 4. **Test the web upload page:** Upload from another machine, verify ingestion.
@@ -1137,10 +1274,29 @@ Both this upload page and the Discord file upload channel should work before you
     - Attempt to access credentials from a WASM tool (should fail)
     - Ingest a document with prompt injection (agent behavior should stay within IDENTITY.md boundaries)
     - Seed contradictory information, verify the agent surfaces both entries with dates
-    - Ask the agent to modify IDENTITY.md — verify approval prompt
-12. **Verify engine v1 + commitments compatibility:** confirm commitment-triage is firing under engine v1. If the skill silently no-ops, consult the Engine v2 Opt-In Appendix and re-test with `ENGINE_V2=true`.
+    - Ask the agent to modify **IDENTITY.md** -- verify approval prompt
+    - Ask the agent to modify **SOUL.md** -- verify approval prompt (same permission applies to all identity files, not only IDENTITY.md)
+    - Ask the agent to modify **USER.md** -- verify approval prompt
+    - Ask the agent to append to **MEMORY.md** -- verify approval prompt (`memory_write` = AskEachTime is global)
+12. **Verify the shell tool is truly Disabled (not just AskEachTime):** ask the agent a task that would tempt it to propose running a shell command, e.g., "Check the disk space on this machine." The agent should tell you it doesn't have shell access rather than ask for approval. If it asks for approval to run a shell command, the tool is AskEachTime not Disabled -- correct it via the permission system before continuing.
+13. **Verify Google Calendar sharing (not OAuth) is the path for your availability:**
+    - Confirm in Google Calendar settings that your personal calendar is shared with `agent@yourdomain.com` at "See only free/busy (hide details)"
+    - In the agent's Google account, verify there is NO separate OAuth grant with `calendar.readonly` scope on your personal account -- the agent only has OAuth for its own `agent@` calendar
+    - Ask the agent "When am I free tomorrow afternoon?" -- it should answer using the shared view, not report an OAuth error on your calendar
+14. **Test Smart Router fallback when Ollama is down:**
+    - SSH into the Mac Mini: `ssh ironclawagent@ironclaw-mini.local`
+    - Stop Ollama temporarily: `brew services stop ollama` (or `killall ollama` if not using brew services)
+    - Send a local-type task to the agent via Discord `#general` (e.g., "summarize the last 3 client notes")
+    - Verify: the Smart Router posts an `ollama_down` alert to `#system-alerts` within ~30 seconds, and either the task is routed to the API or the agent reports the failure gracefully to Discord
+    - Restart Ollama: `brew services start ollama` and confirm normal routing resumes
+15. **Test the backup + restore cycle (don't just trust the cron):**
+    - Manually trigger a backup: `pg_dump ironclaw | gzip > /tmp/test-backup.sql.gz && gpg --symmetric --batch --passphrase-file ~/.ironclaw/backup-passphrase --cipher-algo AES256 /tmp/test-backup.sql.gz`
+    - Decrypt + restore to a test DB per the Monthly Restore Test procedure (see Backup Strategy section)
+    - Verify row counts match between live `ironclaw` and test DB
+    - Cleanup: drop test DB, delete `/tmp/test-backup.sql.gz*`
+16. **Verify engine v1 + commitments compatibility:** confirm commitment-triage is firing under engine v1. If the skill silently no-ops, consult the Engine v2 Opt-In Appendix and re-test with `ENGINE_V2=true`.
 
-13. **Run the Model Calibration Protocol:**
+17. **Run the Model Calibration Protocol:**
 
     Run 10 representative tasks through both Qwen 3.5 27B and Sonnet. Score 1-5 on quality, completeness, tone.
 
@@ -1316,9 +1472,374 @@ function checkUserOverride(prompt: string): { override: ClassificationResult | n
 }
 ```
 
-**Main router with error handling, Haiku fallback, cost tracking, and Discord webhook alerts** -- implementation unchanged from v4.3. See `v5-templates/router/` for the full code (same logic as v4.3 Phase 9 router code).
+**Main router with error handling, Haiku fallback, cost tracking, and Discord webhook alerts:**
 
-**Run the router under launchd** for auto-restart on failure (plist in `v5-templates/launchd/`).
+```typescript
+// router/index.ts
+import express from 'express'
+
+const app = express()
+app.use(express.json())
+
+const OLLAMA_URL = 'http://localhost:11434/v1/chat/completions'
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+
+// Discord webhook URLs for fire-and-forget notifications (no bot connection needed)
+const DISCORD_ALERTS_WEBHOOK = process.env.DISCORD_ALERTS_WEBHOOK_URL    // -> #system-alerts
+const DISCORD_COST_WEBHOOK = process.env.DISCORD_COST_WEBHOOK_URL        // -> #cost-tracking
+const DISCORD_ROUTER_WEBHOOK = process.env.DISCORD_ROUTER_WEBHOOK_URL    // -> #router
+
+// Token required to change routing mode via /router/mode (belt-and-suspenders
+// defense alongside the 127.0.0.1-only bind below). Set in ~/.ironclaw/.env.
+const ROUTER_AUTH_TOKEN = process.env.ROUTER_AUTH_TOKEN
+
+// Alert cooldown: same alert type only fires once per 5 minutes
+const ALERT_COOLDOWN_MS = 5 * 60 * 1000
+const recentAlerts = new Map<string, number>()
+
+// Runtime routing mode (overridable via Discord /router slash commands)
+let routingMode: 'auto' | 'api-only' | 'local-only' | 'haiku-fallback' = 'auto'
+
+async function sendDiscordAlert(
+  webhookUrl: string,
+  alert: { type: string; message: string; suggestion: string }
+): Promise<void> {
+  const lastAlert = recentAlerts.get(alert.type)
+  if (lastAlert && Date.now() - lastAlert < ALERT_COOLDOWN_MS) return
+  recentAlerts.set(alert.type, Date.now())
+
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      embeds: [{
+        title: `${alert.type.replace(/_/g, ' ').toUpperCase()}`,
+        description: alert.message,
+        fields: [{ name: 'Suggestion', value: alert.suggestion }],
+        color: 0xFF6B35,
+        timestamp: new Date().toISOString()
+      }]
+    })
+  })
+}
+
+app.post('/v1/chat/completions', async (req, res) => {
+  const messages = req.body.messages
+  const lastMessage = messages[messages.length - 1]?.content || ''
+
+  const { override, cleanPrompt } = checkUserOverride(lastMessage)
+
+  let classification: ClassificationResult
+
+  if (override) {
+    classification = override
+    messages[messages.length - 1].content = cleanPrompt
+  } else if (routingMode === 'api-only') {
+    classification = { backend: 'api', model: 'claude-sonnet-4-6-latest',
+      reason: 'Routing mode: api-only', confidence: 1.0 }
+  } else if (routingMode === 'haiku-fallback') {
+    const autoClassification =
+      classifyByPattern(cleanPrompt) ??
+      classifyByHeuristics(messages, cleanPrompt) ??
+      await classifyByLocalModel(cleanPrompt)
+    classification = autoClassification.backend === 'api'
+      ? { ...autoClassification, model: 'claude-haiku-4-5-latest', reason: 'Haiku fallback mode' }
+      : autoClassification
+  } else if (routingMode === 'local-only') {
+    classification = { backend: 'local', model: 'qwen3.5:27b',
+      reason: 'Routing mode: local-only', confidence: 1.0 }
+  } else {
+    classification =
+      classifyByPattern(cleanPrompt) ??
+      classifyByHeuristics(messages, cleanPrompt) ??
+      await classifyByLocalModel(cleanPrompt)
+  }
+
+  console.log(
+    `[Router] ${classification.backend.toUpperCase()} ` +
+    `(${classification.confidence}) - ${classification.reason}`
+  )
+
+  try {
+    if (classification.backend === 'api') {
+      const anthropicResponse = await forwardToAnthropic(messages, classification.model)
+      updateDailyStats(classification, anthropicResponse.usage)
+      return res.json(translateToOpenAIFormat(anthropicResponse))
+    } else {
+      const ollamaResponse = await forwardToOllama(req.body, classification.model)
+      updateDailyStats(classification)
+      return res.json(await ollamaResponse.json())
+    }
+  } catch (error: any) {
+    return res.status(503).json({
+      error: { message: error.message, type: error.code || 'router_error' }
+    })
+  }
+})
+
+async function forwardToOllama(requestBody: any, model: string) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const response = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...requestBody, model }),
+      signal: controller.signal
+    })
+    clearTimeout(timeout)
+    if (!response.ok) throw new Error(`Ollama returned ${response.status}`)
+    return response
+  } catch (error: any) {
+    clearTimeout(timeout)
+    await sendDiscordAlert(DISCORD_ALERTS_WEBHOOK!, {
+      type: 'ollama_down',
+      message: `Local model unresponsive. Error: ${error.message}`,
+      suggestion: 'Check Ollama: run "ollama serve" on the Mac Mini.'
+    })
+    throw error
+  }
+}
+
+async function forwardToAnthropic(messages: any[], model: string) {
+  const systemMsg = messages.find((m: any) => m.role === 'system')
+  const chatMsgs = messages.filter((m: any) => m.role !== 'system')
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_KEY!,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      system: systemMsg?.content || '',
+      messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content }))
+    })
+  })
+
+  if (!response.ok) {
+    const status = response.status
+
+    if ((status === 429 || status >= 500) && model !== 'claude-haiku-4-5-latest') {
+      await sendDiscordAlert(DISCORD_ALERTS_WEBHOOK!, {
+        type: 'api_fallback_to_haiku',
+        message: `Sonnet returned ${status}. Falling back to Haiku for this request. ` +
+          `Switching to Haiku fallback mode until you respond.`,
+        suggestion: 'Use Discord commands:\n' +
+          '/router mode auto - resume normal routing (Sonnet)\n' +
+          '/router mode haiku - keep using Haiku as API fallback\n' +
+          '/router mode local-only - stay local until you investigate\n' +
+          '/router mode api-only - force Sonnet (retry)'
+      })
+      routingMode = 'haiku-fallback'
+      return forwardToAnthropic(messages, 'claude-haiku-4-5-latest')
+    }
+
+    if (status === 429) {
+      await sendDiscordAlert(DISCORD_ALERTS_WEBHOOK!, {
+        type: 'api_rate_limited',
+        message: `Anthropic API rate limited (429). Haiku fallback also failed.`,
+        suggestion: 'Use /router mode local-only to route locally until this resolves.'
+      })
+    } else if (status >= 500) {
+      await sendDiscordAlert(DISCORD_ALERTS_WEBHOOK!, {
+        type: 'api_server_error',
+        message: `Anthropic API server error (${status}).`,
+        suggestion: 'Check status.anthropic.com. Use /router mode local-only to route locally.'
+      })
+    } else if (status === 401) {
+      await sendDiscordAlert(DISCORD_ALERTS_WEBHOOK!, {
+        type: 'api_auth_error',
+        message: 'Anthropic API key rejected (401).',
+        suggestion: 'API key may be invalid or revoked. Check the Anthropic Console.'
+      })
+    }
+    throw new Error(`API returned ${status}`)
+  }
+
+  return response.json()
+}
+
+function translateToOpenAIFormat(anthropicResponse: any) {
+  return {
+    id: `chatcmpl-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: anthropicResponse.model,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: anthropicResponse.content?.map((c: any) => c.text).join('') || ''
+      },
+      finish_reason: 'stop'
+    }],
+    usage: {
+      prompt_tokens: anthropicResponse.usage?.input_tokens || 0,
+      completion_tokens: anthropicResponse.usage?.output_tokens || 0,
+      total_tokens:
+        (anthropicResponse.usage?.input_tokens || 0) +
+        (anthropicResponse.usage?.output_tokens || 0)
+    }
+  }
+}
+
+// --- Cost tracking ---
+
+const stats: Record<string, any> = {}
+
+const MODEL_PRICING: Record<string, { input: number, output: number }> = {
+  'claude-sonnet-4-6-latest': { input: 3, output: 15 },
+  'claude-haiku-4-5-latest': { input: 1, output: 5 },
+}
+
+function updateDailyStats(
+  classification: ClassificationResult,
+  apiUsage?: { input_tokens: number, output_tokens: number }
+) {
+  const today = new Date().toISOString().split('T')[0]
+  if (!stats[today]) {
+    stats[today] = {
+      date: today, localCalls: 0, apiCalls: 0,
+      apiInputTokens: 0, apiOutputTokens: 0, estimatedCost: 0
+    }
+  }
+  const s = stats[today]
+  if (classification.backend === 'local') {
+    s.localCalls++
+  } else {
+    s.apiCalls++
+    if (apiUsage) {
+      const pricing = MODEL_PRICING[classification.model] || MODEL_PRICING['claude-sonnet-4-6-latest']
+      s.apiInputTokens += apiUsage.input_tokens
+      s.apiOutputTokens += apiUsage.output_tokens
+      s.estimatedCost +=
+        (apiUsage.input_tokens / 1_000_000) * pricing.input +
+        (apiUsage.output_tokens / 1_000_000) * pricing.output
+    }
+  }
+  require('fs').writeFileSync('router-stats.json', JSON.stringify(stats, null, 2))
+}
+
+// --- Health and stats endpoints ---
+
+app.get('/router/health', async (req, res) => {
+  let ollamaHealthy = false
+  try {
+    const r = await fetch('http://localhost:11434/v1/models',
+      { signal: AbortSignal.timeout(5000) })
+    ollamaHealthy = r.ok
+  } catch {}
+
+  res.json({
+    status: 'ok', uptime: process.uptime(),
+    ollama: ollamaHealthy ? 'healthy' : 'unreachable',
+    routingMode
+  })
+})
+
+app.get('/router/stats/today', (req, res) => {
+  const today = new Date().toISOString().split('T')[0]
+  res.json(stats[today] || { date: today, localCalls: 0, apiCalls: 0 })
+})
+
+app.get('/router/stats/month', (req, res) => {
+  const month = new Date().toISOString().slice(0, 7)
+  const monthStats = Object.entries(stats)
+    .filter(([date]) => date.startsWith(month))
+    .map(([, s]) => s)
+
+  const totals = monthStats.reduce((acc: any, s: any) => ({
+    localCalls: acc.localCalls + s.localCalls,
+    apiCalls: acc.apiCalls + s.apiCalls,
+    apiInputTokens: acc.apiInputTokens + s.apiInputTokens,
+    apiOutputTokens: acc.apiOutputTokens + s.apiOutputTokens,
+    estimatedCost: acc.estimatedCost + s.estimatedCost
+  }), { localCalls: 0, apiCalls: 0, apiInputTokens: 0, apiOutputTokens: 0, estimatedCost: 0 })
+
+  const daysElapsed = monthStats.length || 1
+  const daysInMonth = new Date(
+    new Date().getFullYear(), new Date().getMonth() + 1, 0
+  ).getDate()
+
+  res.json({
+    ...totals, daysTracked: daysElapsed,
+    projectedMonthlyCost: (totals.estimatedCost / daysElapsed) * daysInMonth,
+    spendCap: 50.00,
+    percentOfCap: ((totals.estimatedCost / 50.00) * 100).toFixed(1) + '%'
+  })
+})
+
+// --- Discord slash command support for router management ---
+// /router status, /router mode auto|haiku|api-only|local-only
+// Auth-gated (require Bearer token matching ROUTER_AUTH_TOKEN).
+
+app.post('/router/mode', (req, res) => {
+  const auth = req.header('authorization') || ''
+  const expected = `Bearer ${ROUTER_AUTH_TOKEN || ''}`
+  if (!ROUTER_AUTH_TOKEN || auth !== expected) {
+    return res.status(401).json({ error: 'unauthorized' })
+  }
+
+  const { mode } = req.body
+  if (['auto', 'api-only', 'local-only', 'haiku-fallback'].includes(mode)) {
+    routingMode = mode
+    res.json({ ok: true, mode: routingMode })
+  } else {
+    res.status(400).json({ error: 'Invalid mode' })
+  }
+})
+
+// Bind to 127.0.0.1 ONLY -- never listen on external interfaces.
+// Defense-in-depth against any misconfiguration that would expose port 3100 to the LAN or internet.
+app.listen(3100, '127.0.0.1', () => {
+  console.log('Smart Router running on 127.0.0.1:3100')
+})
+```
+
+**Security notes on the router auth (v5.0 additions):**
+
+- `/router/mode` requires a `Bearer <ROUTER_AUTH_TOKEN>` header. Set `ROUTER_AUTH_TOKEN` in `~/.ironclaw/.env` (any strong random string will do — e.g., `ROUTER_AUTH_TOKEN=$(openssl rand -base64 32)`).
+- Your Discord bot (or whatever calls `/router/mode`) must include this header when sending mode-change requests.
+- The read-only endpoints `/router/health`, `/router/stats/today`, `/router/stats/month` are NOT auth-gated — they expose only aggregated data that's also surfaced to Discord webhooks. Intentional.
+- The server now binds explicitly to `127.0.0.1` so only processes on the Mac Mini itself can reach port 3100. Even if the firewall were disabled or a tunnel misconfigured, external traffic can't reach it.
+
+**Run the router under macOS launchd** for auto-restart on failure:
+
+```xml
+<!-- ~/Library/LaunchAgents/com.ironclaw.router.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ironclaw.router</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/path/to/router/index.js</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/ironclawagent/logs/router-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ironclawagent/logs/router-stderr.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.ironclaw.router.plist
+```
 
 **Emergency override:** Edit `.env` to point IronClaw directly at Ollama or the API. **Caveat:** if you ever set LLM provider via the web UI (you shouldn't have), clear that DB setting first.
 
@@ -1331,6 +1852,16 @@ function checkUserOverride(prompt: string): { override: ClassificationResult | n
 - Complex/polished work auto-routes to Sonnet
 - Error handling with Discord webhook alerts
 - Full logging for classifier tuning
+
+**What this does NOT currently do: SSE streaming.**
+
+The router as implemented here waits for the full response from Ollama/Anthropic before returning it to IronClaw (not token-by-token streaming). This is a deliberate v5.0 choice because:
+
+- Discord is our only user-facing channel in v5.0, and Discord doesn't render streaming messages anyway -- it posts complete messages when they're ready. Non-streaming router to complete message to Discord post works identically from the user's perspective.
+- The Phase 7.5 web upload page is a file drag-and-drop tool, not a chat UI -- no streaming need there either.
+- Implementing streaming is non-trivial (Ollama streams newline-delimited JSON; Anthropic streams SSE with `content_block_delta` events; the router would need to translate both to OpenAI-compatible SSE). Meaningful engineering work for no current-workflow benefit.
+
+**When to revisit:** if you ever build a ChatGPT-style web chat UI as a future Phase 9 extension. That's the only scenario where streaming materially improves the user experience. When that day comes, the router needs a `stream: true` passthrough mode that preserves the underlying LLM's event stream.
 
 ---
 
@@ -1483,21 +2014,39 @@ Zero additional cost (included in Google Workspace). OS-level cron; the agent it
 
 **Monthly restore test:** Restore latest database and workspace backups to a test environment. Takes ~5 minutes.
 
+This test exercises the full restore path including GPG decryption -- because the offsite backups on Google Drive are encrypted, and a failed decryption in a real emergency is the worst time to find out the passphrase has drifted. Run against the local `.gpg` files (same format as what's on Drive) so you're testing the actual round-trip. Adjust `DATE` if you want to test a day other than today's backup.
+
 ```bash
-# Database restore test
+DATE=$(date +%Y%m%d)
+PASSPHRASE_FILE=~/.ironclaw/backup-passphrase
+
+# --- Database restore test (GPG decrypt -> gunzip -> psql) ---
 createdb ironclaw_restore_test
 psql ironclaw_restore_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
-gunzip -c /Users/ironclawagent/backups/db/ironclaw-$(date +%Y%m%d).sql.gz | psql ironclaw_restore_test
+gpg --decrypt --batch --passphrase-file "$PASSPHRASE_FILE" \
+  /Users/ironclawagent/backups/db/ironclaw-$DATE.sql.gz.gpg 2>/dev/null \
+  | gunzip -c \
+  | psql ironclaw_restore_test
+
+# Compare row counts between live and restored DB
+echo "Live DB memories row count:"
 psql ironclaw -c "SELECT COUNT(*) FROM memories;"
+echo "Restored DB memories row count:"
 psql ironclaw_restore_test -c "SELECT COUNT(*) FROM memories;"
 dropdb ironclaw_restore_test
 
-# Workspace restore test
+# --- Workspace restore test (GPG decrypt -> tar extract -> diff) ---
 mkdir -p /tmp/ironclaw-restore-test
-tar xzf /Users/ironclawagent/backups/workspace/ironclaw-workspace-$(date +%Y%m%d).tar.gz -C /tmp/ironclaw-restore-test
-diff -r /Users/ironclawagent/.ironclaw /tmp/ironclaw-restore-test/.ironclaw | head -20
+gpg --decrypt --batch --passphrase-file "$PASSPHRASE_FILE" \
+  /Users/ironclawagent/backups/workspace/ironclaw-workspace-$DATE.tar.gz.gpg 2>/dev/null \
+  | tar -xzpf - -C /tmp/ironclaw-restore-test
+diff -r ~/.ironclaw /tmp/ironclaw-restore-test/.ironclaw | head -20
 rm -rf /tmp/ironclaw-restore-test
 ```
+
+If either GPG decrypt fails, your passphrase file has drifted from what was used to encrypt the backup -- recover from your secrets manager before proceeding. If `diff` shows differences beyond expected volatile paths (recent conversation/daily logs), investigate.
+
+**Quarterly: full bare-metal restore drill.** Once per quarter, do a full restore to a fresh macOS user or VM to confirm end-to-end recoverability, not just the fast file-level diff above. This catches issues like FileVault keychain dependencies, permissions loss through tar, or environmental assumptions the cron-restore doesn't exercise.
 
 ---
 
@@ -1508,6 +2057,7 @@ rm -rf /tmp/ironclaw-restore-test
 - **Review heartbeat outputs** weekly for the first month, then monthly
 - **Monthly restore test** (DB + workspace) to verify backup integrity
 - **Monthly endpoint allowlist audit** and OAuth scope review
+- **Monthly installed-skills audit (v5.0 -- NEW):** `ls ~/.ironclaw/installed_skills/` (or whatever the live path is) and compare against what you remember approving. Investigate any skill you don't recognize. Remove anything suspicious with `rm -rf ~/.ironclaw/installed_skills/<name>`. This is the monitoring backstop for Threat #8 (Skill / routine installation trust boundary).
 - **Update IronClaw** periodically (`brew upgrade ironclaw`)
 - **Prune stale context** via `/memory forget` or Memory Explorer
 - **Feed the agent after every client call** to keep project context fresh
@@ -1733,8 +2283,9 @@ Shows live agent state, recent tool calls, heartbeat status. Read-only display -
 ---
 
 *Document created: April 15, 2026 (v5.0 baseline)*
-*Previous versions: v4.3 (March 26), v4.2, v4.1, v4.0, earlier*
+*v5.1 updated: April 15, 2026 — deep-analysis pass: inlined full Smart Router + launchd plists, backup passphrase + GPG restore pipeline, IronClaw launchd plist, router auth + 127.0.0.1 bind, GitHub fine-grained token scoping, Ollama brew services auto-start, expanded Phase 8 validation (17 tests), Threat #8 (skill injection trust boundary), Google Calendar sharing security rationale*
+*Previous versions: v5.0 (April 15), v4.3 (March 26), v4.2, v4.1, v4.0, earlier*
 *Originally created by Scott Rippey at PowerYourProcess.ai*
-*v5.0 deltas: Homebrew install, bundled Google tools, Google Calendar sharing, commitments system, Identity Interview (Phase 4b), permanent memory_write approval gate, expanded backup strategy, deployment profiles, engine v1 with v2 bake-off*
+*v5.0 deltas from v4.3: Homebrew install, bundled Google tools, Google Calendar sharing, commitments system, Identity Interview (Phase 4b), permanent memory_write approval gate, expanded backup strategy, deployment profiles, engine v1 with v2 bake-off*
 *Purpose: IronClaw Mac Mini AI Assistant setup reference*
 *Feel free to share and adapt for your own setup.*

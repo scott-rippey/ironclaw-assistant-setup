@@ -1,3 +1,9 @@
+# PEOPLE/ Schema — REFERENCE DOC, DO NOT COPY TO `~/.ironclaw/`
+
+> This file documents the convention for `~/.ironclaw/PEOPLE/*.md` files. It is NOT a template to copy verbatim. During Phase 4b Identity Interview, Claude Code creates individual person files (e.g., `~/.ironclaw/PEOPLE/jane-smith.md`) populated with the schema below. This file stays in the project repo as documentation.
+
+---
+
 # PEOPLE/ Schema (Convention, Not Enforced)
 
 PEOPLE/ is a directory of per-person contact files. Each file anchors the agent's

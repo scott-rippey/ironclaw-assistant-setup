@@ -1,6 +1,6 @@
 # v5-templates/
 
-Starting templates for the v5.0 setup guide.
+Starting templates for the v5.1 setup guide.
 
 ## Contents
 
@@ -57,5 +57,5 @@ Templates in a separate directory keeps them:
   Mac Mini and in the agent's private GitHub repo. Never in this project repo.
 - Smart Router TypeScript source -- the guide's Phase 9 contains the full
   implementation inline. A future version of this templates directory could
-  extract it here; for v5.0 it stays inline in the guide.
+  extract it here; for v5.1 it stays inline in the guide.
 - launchd plists -- documented inline in the guide's Phase 9.
